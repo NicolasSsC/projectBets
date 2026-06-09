@@ -16,5 +16,9 @@ export const ODDS_API = {
   cacheHours: 6, // no re-fetchear si hay cuotas Pinnacle más recientes que esto
 } as const;
 
+// Cuotas locales más viejas que esto no entran al detector: si Pinnacle mueve
+// la línea después, una cuota local desactualizada mostraría value fantasma.
+export const LOCAL_ODDS_MAX_AGE_HOURS = 24;
+
 export const SHARP_SOURCE = "pinnacle";
 export const LOCAL_SOURCES = ["betplay", "wplay"] as const;

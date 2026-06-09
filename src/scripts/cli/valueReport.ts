@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { LOCAL_ODDS_MAX_AGE_HOURS, SHARP_SOURCE } from "../../config.js";
 import { currentBankroll } from "../../services/bankroll.js";
 import { prisma } from "../../services/db.js";
 import { evaluateMatch, type UncomparableOdds, type ValuePick } from "../../services/valueDetector.js";
@@ -11,10 +12,15 @@ const matches = await prisma.match.findMany({
   orderBy: { kickoff: "asc" },
 });
 
+const staleCutoff = new Date(Date.now() - LOCAL_ODDS_MAX_AGE_HOURS * 3600_000);
+let staleCount = 0;
+
 const evaluations: ValuePick[] = [];
 const uncomparable: UncomparableOdds[] = [];
 for (const match of matches) {
-  const result = evaluateMatch(match, match.odds, bankroll);
+  const fresh = match.odds.filter((o) => o.source === SHARP_SOURCE || o.fetchedAt > staleCutoff);
+  staleCount += match.odds.length - fresh.length;
+  const result = evaluateMatch(match, fresh, bankroll);
   evaluations.push(...result.evaluations);
   uncomparable.push(...result.uncomparable);
 }
@@ -52,6 +58,10 @@ if (evaluations.length === 0) {
     writeFileSync(file, JSON.stringify({ generatedAt: new Date(), bankroll, picks }, null, 2));
     console.log(`Reporte guardado en ${file}`);
   }
+}
+
+if (staleCount > 0) {
+  console.log(`\nℹ️  ${staleCount} cuota(s) local(es) con más de ${LOCAL_ODDS_MAX_AGE_HOURS}h fueron ignoradas — re-ingrésalas con \`pnpm odds:inject\` si siguen vigentes.`);
 }
 
 if (uncomparable.length > 0) {
