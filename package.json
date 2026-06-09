@@ -10,6 +10,9 @@
     "odds:fetch": "tsx src/scripts/daily/fetchOdds.ts",
     "odds:inject": "tsx src/scripts/cli/injectOdds.ts",
     "value:report": "tsx src/scripts/cli/valueReport.ts",
+    "bet:place": "tsx src/scripts/cli/placeBet.ts",
+    "bet:settle": "tsx src/scripts/cli/settleBets.ts",
+    "dashboard": "tsx src/scripts/cli/dashboard.ts",
     "demo": "tsx src/scripts/demo/fixtureDemo.ts"
   },
   "dependencies": {
