@@ -20,6 +20,29 @@ import {
   type EspnEvent,
 } from "../../services/espn.js";
 import { prisma } from "../../services/db.js";
+import { eventXg, findNationalTeamId, lastFinishedEvents } from "../../services/sofascore.js";
+
+/** xG promedio de los últimos 5 partidos vía Sofascore (best-effort, nunca bloquea). */
+async function sofascoreXg(teamDbId: string, teamName: string, cachedSofaId: number | null) {
+  try {
+    let sofaId = cachedSofaId;
+    if (!sofaId) {
+      sofaId = await findNationalTeamId(teamName);
+      if (!sofaId) return null;
+      await prisma.team.update({ where: { id: teamDbId }, data: { sofaId } });
+    }
+    const events = await lastFinishedEvents(sofaId, 5);
+    const values: number[] = [];
+    for (const e of events) {
+      const xg = await eventXg(e, sofaId);
+      if (xg !== null) values.push(xg);
+    }
+    if (values.length === 0) return null;
+    return { avg: values.reduce((a, b) => a + b, 0) / values.length, n: values.length };
+  } catch {
+    return null; // API no oficial: cualquier fallo se ignora
+  }
+}
 
 const args = process.argv.slice(2);
 let targetNames: string[];
@@ -93,16 +116,19 @@ for (const oddsName of targetNames) {
     if (cornersV !== null) { corners += cornersV; nCorners++; }
   }
 
+  const xg = await sofascoreXg(team.id, team.name, team.sofaId);
+
   await prisma.qualifyingStats.update({
     where: { teamId: team.id },
     data: {
       shotsOnTargetAvg: nSot > 0 ? sot / nSot : null,
       cornersAvg: nCorners > 0 ? corners / nCorners : null,
+      xgForAvg: xg?.avg ?? null,
       enrichedMatches: Math.max(nSot, nCorners),
     },
   });
   console.log(
-    `${nSot || nCorners ? "✅" : "⚠️ "} ${team.name}: SoT ${nSot ? (sot / nSot).toFixed(1) : "—"} | córners ${nCorners ? (corners / nCorners).toFixed(1) : "—"} (boxscores con datos: ${Math.max(nSot, nCorners)}/${last5.length})`,
+    `${nSot || nCorners ? "✅" : "⚠️ "} ${team.name}: SoT ${nSot ? (sot / nSot).toFixed(1) : "—"} | córners ${nCorners ? (corners / nCorners).toFixed(1) : "—"} (ESPN ${Math.max(nSot, nCorners)}/${last5.length}) | xG ${xg ? `${xg.avg.toFixed(2)} (Sofascore ${xg.n}/5)` : "— (Sofascore sin datos)"}`,
   );
 }
 
