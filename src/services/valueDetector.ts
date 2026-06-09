@@ -41,9 +41,17 @@ const MARKET_OUTCOMES: Record<string, string[]> = {
 /**
  * Núcleo del sistema: compara cuotas locales (Betplay/Wplay) contra la
  * probabilidad justa derivada de Pinnacle (de-vigged). Hay value cuando
- * pFair * cuotaLocal - 1 >= minEdge y el stake de Kelly supera el mínimo.
+ * pFair * cuotaLocal - 1 >= minEdge (el filtro vive en kellyStake → stake > 0).
  */
 export function detectValue(match: MatchInfo, rows: OddsRow[], bankroll: number): ValuePick[] {
+  return evaluateLocalOdds(match, rows, bankroll).filter((p) => p.stake > 0);
+}
+
+/**
+ * Igual que detectValue pero devuelve TODAS las comparaciones locales vs
+ * Pinnacle, incluyendo edges negativos (stake 0). Para diagnóstico/reporte.
+ */
+export function evaluateLocalOdds(match: MatchInfo, rows: OddsRow[], bankroll: number): ValuePick[] {
   const picks: ValuePick[] = [];
   const matchLabel = `${match.homeTeam} vs ${match.awayTeam}`;
 
@@ -79,7 +87,6 @@ export function detectValue(match: MatchInfo, rows: OddsRow[], bankroll: number)
       if (pFair === undefined) continue;
 
       const { edge, stake } = kellyStake(pFair, row.odds, bankroll);
-      if (stake === 0) continue; // kellyStake ya aplica el filtro de minEdge
 
       picks.push({
         matchId: match.id,

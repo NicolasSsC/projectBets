@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { currentBankroll } from "../../services/bankroll.js";
 import { prisma } from "../../services/db.js";
-import { detectValue, type ValuePick } from "../../services/valueDetector.js";
+import { evaluateLocalOdds, type ValuePick } from "../../services/valueDetector.js";
 
 const bankroll = await currentBankroll();
 const matches = await prisma.match.findMany({
@@ -11,20 +11,22 @@ const matches = await prisma.match.findMany({
   orderBy: { kickoff: "asc" },
 });
 
-const allPicks: ValuePick[] = [];
+const evaluations: ValuePick[] = [];
 for (const match of matches) {
-  allPicks.push(...detectValue(match, match.odds, bankroll));
+  evaluations.push(...evaluateLocalOdds(match, match.odds, bankroll));
 }
-allPicks.sort((a, b) => b.edge - a.edge);
+evaluations.sort((a, b) => b.edge - a.edge);
+const picks = evaluations.filter((p) => p.stake > 0);
 
 console.log(`\n💰 Bankroll actual: $${bankroll.toLocaleString("es-CO")} COP`);
-console.log(`📊 Partidos analizados: ${matches.length}\n`);
+console.log(`📊 Partidos analizados: ${matches.length} — comparaciones local vs Pinnacle: ${evaluations.length}\n`);
 
-if (allPicks.length === 0) {
-  console.log("Sin value bets hoy. (Se necesitan cuotas Pinnacle Y locales del mismo mercado.)");
+if (evaluations.length === 0) {
+  console.log("No hay nada que comparar: se necesitan cuotas Pinnacle Y locales del MISMO mercado y MISMA línea.");
+  console.log("(Ej: si Pinnacle tiene totals 2.25, ingresar Betplay over/under 2.5 no es comparable.)");
 } else {
   console.table(
-    allPicks.map((p) => ({
+    evaluations.map((p) => ({
       Partido: p.matchLabel,
       Mercado: p.market === "totals" ? `${p.outcome} ${p.line}` : `1X2 ${p.outcome}`,
       Casa: p.source,
@@ -32,15 +34,33 @@ if (allPicks.length === 0) {
       Pinnacle: p.pinnacleOdds.toFixed(2),
       "P justa": `${(p.pFair * 100).toFixed(1)}%`,
       Edge: `${(p.edge * 100).toFixed(1)}%`,
-      "Stake COP": p.stake.toLocaleString("es-CO"),
+      "Stake COP": p.stake > 0 ? p.stake.toLocaleString("es-CO") : "—",
+      Value: p.stake > 0 ? "✅" : "",
     })),
   );
 
-  const reportsDir = join(process.cwd(), "reports");
-  mkdirSync(reportsDir, { recursive: true });
-  const file = join(reportsDir, `${new Date().toISOString().slice(0, 10)}.json`);
-  writeFileSync(file, JSON.stringify({ generatedAt: new Date(), bankroll, picks: allPicks }, null, 2));
-  console.log(`Reporte guardado en ${file}`);
+  if (picks.length === 0) {
+    console.log("Sin value hoy: ninguna cuota local supera la probabilidad justa de Pinnacle en ≥5%.");
+  } else {
+    console.log(`🎯 ${picks.length} value bet(s) detectado(s) — ver columna ✅`);
+    const reportsDir = join(process.cwd(), "reports");
+    mkdirSync(reportsDir, { recursive: true });
+    const file = join(reportsDir, `${new Date().toISOString().slice(0, 10)}.json`);
+    writeFileSync(file, JSON.stringify({ generatedAt: new Date(), bankroll, picks }, null, 2));
+    console.log(`Reporte guardado en ${file}`);
+  }
+}
+
+// Aviso de frescura: comparar contra Pinnacle viejo puede ser solo movimiento de línea
+const lastPinnacle = await prisma.marketOdds.findFirst({
+  where: { source: "pinnacle" },
+  orderBy: { fetchedAt: "desc" },
+});
+if (lastPinnacle) {
+  const ageH = (Date.now() - lastPinnacle.fetchedAt.getTime()) / 3600_000;
+  if (ageH > 3) {
+    console.log(`\n⚠️  Cuotas Pinnacle tienen ${ageH.toFixed(1)}h — considera \`pnpm odds:fetch --force\` antes de apostar.`);
+  }
 }
 
 await prisma.$disconnect();
