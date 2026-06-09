@@ -13,6 +13,10 @@
     "bet:place": "tsx src/scripts/cli/placeBet.ts",
     "bet:settle": "tsx src/scripts/cli/settleBets.ts",
     "dashboard": "tsx src/scripts/cli/dashboard.ts",
+    "seed:qualifying": "tsx src/scripts/seed/qualifyingStats.ts",
+    "stats:enrich": "tsx src/scripts/seed/enrichStats.ts",
+    "lineups": "tsx src/scripts/daily/lineups.ts",
+    "context": "tsx src/scripts/cli/matchContext.ts",
     "demo": "tsx src/scripts/demo/fixtureDemo.ts"
   },
   "dependencies": {

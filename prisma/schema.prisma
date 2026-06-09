@@ -51,6 +51,40 @@ model Bet {
   settledAt DateTime?
 }
 
+model Team {
+  id     String @id @default(cuid())
+  apiId  Int    @unique // team id de API-Football
+  name   String @unique
+  stats  QualifyingStats?
+}
+
+// Stats agregadas de la eliminatoria de cada selección. Contexto para
+// decidir sobre picks — NO alimenta el detector de value (eso es Pinnacle).
+model QualifyingStats {
+  id               String   @id @default(cuid())
+  teamId           String   @unique
+  team             Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  confederation    String   // africa | asia | concacaf | europe | oceania | conmebol
+  played           Int
+  wins             Int
+  draws            Int
+  losses           Int
+  goalsFor         Int
+  goalsAgainst     Int
+  formLast5        String   // ej: "WWDLW", más reciente primero
+  xgForAvg         Float?   // promedios por partido — solo si stats:enrich corrió
+  shotsOnTargetAvg Float?
+  cornersAvg       Float?
+  enrichedMatches  Int      @default(0) // sobre cuántos partidos se calcularon los promedios
+  updatedAt        DateTime @updatedAt
+}
+
+// Contador de requests diarios a API-Football (plan gratuito: 100/día)
+model ApiUsage {
+  date  String @id // YYYY-MM-DD
+  count Int    @default(0)
+}
+
 model BankrollSnapshot {
   id      String   @id @default(cuid())
   date    DateTime @default(now())
