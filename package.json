@@ -17,7 +17,10 @@
     "stats:enrich": "tsx src/scripts/seed/enrichStats.ts",
     "lineups": "tsx src/scripts/daily/lineups.ts",
     "context": "tsx src/scripts/cli/matchContext.ts",
-    "demo": "tsx src/scripts/demo/fixtureDemo.ts"
+    "demo": "tsx src/scripts/demo/fixtureDemo.ts",
+    "demo:settle": "tsx src/scripts/demo/settleDemo.ts",
+    "demo:sandbox": "tsx src/scripts/demo/sandbox.ts",
+    "demo:clean": "tsx src/scripts/demo/sandboxClean.ts"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
