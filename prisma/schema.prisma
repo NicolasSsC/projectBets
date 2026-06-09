@@ -1,0 +1,59 @@
+// SQLite para el MVP. Para migrar a PostgreSQL: cambiar provider a "postgresql"
+// y DATABASE_URL en .env, luego `pnpm db:migrate`.
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Match {
+  id         String   @id @default(cuid())
+  externalId String   @unique // event id de The Odds API (o "manual-..." / "demo-...")
+  homeTeam   String
+  awayTeam   String
+  kickoff    DateTime
+  status     String   @default("scheduled") // scheduled | finished
+  odds       MarketOdds[]
+  bets       Bet[]
+}
+
+model MarketOdds {
+  id        String   @id @default(cuid())
+  matchId   String
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  source    String   // pinnacle | betplay | wplay
+  market    String   // h2h | totals
+  line      Float    @default(0) // 2.5 para totals; 0 = sin línea (h2h)
+  outcome   String   // home | draw | away | over | under
+  odds      Float
+  fetchedAt DateTime @default(now())
+
+  @@unique([matchId, source, market, line, outcome])
+}
+
+model Bet {
+  id        String    @id @default(cuid())
+  matchId   String
+  match     Match     @relation(fields: [matchId], references: [id])
+  source    String
+  market    String
+  line      Float     @default(0)
+  outcome   String
+  odds      Float
+  stake     Int       // COP
+  edge      Float
+  status    String    @default("pending") // pending | won | lost | void
+  profit    Int       @default(0) // COP, negativo si pierde
+  placedAt  DateTime  @default(now())
+  settledAt DateTime?
+}
+
+model BankrollSnapshot {
+  id      String   @id @default(cuid())
+  date    DateTime @default(now())
+  balance Int      // COP
+  note    String?
+}
