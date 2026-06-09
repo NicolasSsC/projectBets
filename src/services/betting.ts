@@ -1,6 +1,7 @@
 import { RISK } from "../config.js";
 import { prisma } from "./db.js";
 import { currentBankroll } from "./bankroll.js";
+import { formatMarket } from "../utils/format.js";
 
 /** P&L realizado hoy (apuestas liquidadas hoy). */
 export async function todayPnl(): Promise<number> {
@@ -41,7 +42,7 @@ export async function settleBet(betId: string, outcome: SettleOutcome): Promise<
     prisma.bankrollSnapshot.create({
       data: {
         balance,
-        note: `${outcome === "won" ? "✅" : outcome === "lost" ? "❌" : "↩️"} ${bet.match.homeTeam} vs ${bet.match.awayTeam} — ${bet.market === "totals" ? `${bet.outcome} ${bet.line}` : `1X2 ${bet.outcome}`} @ ${bet.odds} (${bet.source})`,
+        note: `${outcome === "won" ? "✅" : outcome === "lost" ? "❌" : "↩️"} ${bet.match.homeTeam} vs ${bet.match.awayTeam} — ${formatMarket(bet.market, bet.outcome, bet.line)} @ ${bet.odds} (${bet.source})`,
       },
     }),
   ]);

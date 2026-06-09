@@ -8,6 +8,7 @@ import { currentBankroll } from "../../services/bankroll.js";
 import { stopLossHit } from "../../services/betting.js";
 import { prisma } from "../../services/db.js";
 import { evaluateMatch, type ValuePick } from "../../services/valueDetector.js";
+import { formatMarket } from "../../utils/format.js";
 
 const stopLoss = await stopLossHit();
 if (stopLoss.hit) {
@@ -52,7 +53,7 @@ while (again) {
   const pick = await select({
     message: "Value pick a registrar:",
     choices: available.map((p, i) => ({
-      name: `${p.matchLabel} — ${p.market === "totals" ? `${p.outcome} ${p.line}` : `1X2 ${p.outcome}`} @ ${p.localOdds} (${p.source}) | edge ${(p.edge * 100).toFixed(1)}% | stake $${p.stake.toLocaleString("es-CO")}`,
+      name: `${p.matchLabel} — ${formatMarket(p.market, p.outcome, p.line)} @ ${p.localOdds} (${p.source}) | edge ${(p.edge * 100).toFixed(1)}% | stake $${p.stake.toLocaleString("es-CO")}`,
       value: i,
     })),
   });

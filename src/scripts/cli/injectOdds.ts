@@ -5,7 +5,10 @@ import { prisma } from "../../services/db.js";
 const MARKETS = [
   { name: "1X2 (resultado final)", value: "h2h", outcomes: ["home", "draw", "away"] },
   { name: "Total de goles (over/under)", value: "totals", outcomes: ["over", "under"] },
+  { name: "Total de córners (over/under)", value: "totals_corners", outcomes: ["over", "under"] },
 ] as const;
+
+const LINE_LABEL: Record<string, string> = { totals: "goles", totals_corners: "córners" };
 
 const OUTCOME_LABEL: Record<string, string> = {
   home: "Local",
@@ -53,29 +56,30 @@ while (again) {
   const market = MARKETS.find((m) => m.value === marketKey)!;
 
   let line = 0;
-  if (marketKey === "totals") {
+  if (marketKey !== "h2h") {
+    const unidad = LINE_LABEL[marketKey];
     // Solo las líneas que Pinnacle cubre son comparables — ofrecerlas primero
     const pinnacleLines = await prisma.marketOdds.findMany({
-      where: { matchId, source: "pinnacle", market: "totals" },
+      where: { matchId, source: "pinnacle", market: marketKey },
       select: { line: true },
       distinct: ["line"],
       orderBy: { line: "asc" },
     });
 
     if (pinnacleLines.length === 0) {
-      console.log("⚠️  Pinnacle no tiene totals para este partido — la cuota se guardará pero NO será comparable.");
-      const raw = await input({ message: "Línea de goles:", default: "2.5" });
+      console.log(`⚠️  Pinnacle no tiene ${unidad} para este partido — la cuota se guardará pero NO será comparable.`);
+      const raw = await input({ message: `Línea de ${unidad}:`, default: marketKey === "totals" ? "2.5" : "9.5" });
       line = Number(raw.replace(",", "."));
     } else {
       const choice = await select({
-        message: "Línea de goles (las de Pinnacle son las únicas comparables):",
+        message: `Línea de ${unidad} (las de Pinnacle son las únicas comparables):`,
         choices: [
           ...pinnacleLines.map((l) => ({ name: `${l.line} (Pinnacle ✅)`, value: l.line })),
           { name: "Otra línea (no comparable)", value: -1 },
         ],
       });
       if (choice === -1) {
-        const raw = await input({ message: "Línea de goles:" });
+        const raw = await input({ message: `Línea de ${unidad}:` });
         line = Number(raw.replace(",", "."));
         console.log("⚠️  Pinnacle no cubre esa línea — se guardará pero NO entrará al detector de value.");
       } else {
@@ -87,7 +91,7 @@ while (again) {
   for (const source of LOCAL_SOURCES) {
     console.log(`\n— Cuotas de ${source.toUpperCase()} —`);
     for (const outcome of market.outcomes) {
-      const label = market.value === "totals" ? `${OUTCOME_LABEL[outcome]} ${line}` : OUTCOME_LABEL[outcome];
+      const label = market.value === "h2h" ? OUTCOME_LABEL[outcome] : `${OUTCOME_LABEL[outcome]} ${line}`;
       const odds = await parseOdds(`${label}:`);
       if (odds === null) continue;
       await prisma.marketOdds.upsert({

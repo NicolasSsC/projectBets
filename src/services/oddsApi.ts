@@ -104,6 +104,78 @@ export async function fetchPinnacleOdds(force = false): Promise<{ matches: numbe
   return { matches: count, skipped: false };
 }
 
+/**
+ * Trae líneas de córners de Pinnacle (alternate_totals_corners) por evento,
+ * solo para partidos en las próximas `windowHours`. Costo: ~1 crédito por
+ * partido. Guard de caché igual que el fetch principal.
+ */
+export async function fetchPinnacleCorners(
+  force = false,
+  windowHours = 48,
+): Promise<{ matches: number; skipped: number }> {
+  const upcoming = await prisma.match.findMany({
+    where: {
+      kickoff: { gt: new Date(), lt: new Date(Date.now() + windowHours * 3600_000) },
+      status: "scheduled",
+      externalId: { not: { startsWith: "demo" } },
+    },
+  });
+
+  let fetched = 0;
+  let skipped = 0;
+  for (const match of upcoming) {
+    if (!force) {
+      const cutoff = new Date(Date.now() - ODDS_API.cacheHours * 3600_000);
+      const recent = await prisma.marketOdds.findFirst({
+        where: { matchId: match.id, source: SHARP_SOURCE, market: "totals_corners", fetchedAt: { gt: cutoff } },
+      });
+      if (recent) {
+        skipped++;
+        continue;
+      }
+    }
+
+    const url =
+      `${ODDS_API.baseUrl}/sports/${ODDS_API.sportKey}/events/${match.externalId}/odds` +
+      `?apiKey=${requireKey()}&bookmakers=${SHARP_SOURCE}&markets=alternate_totals_corners&oddsFormat=decimal`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.error(`  ⚠️ córners ${match.homeTeam} vs ${match.awayTeam}: HTTP ${res.status}`);
+      continue;
+    }
+    const remaining = res.headers.get("x-requests-remaining");
+    if (remaining) console.log(`Créditos restantes The Odds API: ${remaining}`);
+
+    const event = (await res.json()) as ApiEvent;
+    const pinnacle = event.bookmakers?.find((b) => b.key === SHARP_SOURCE);
+    const market = pinnacle?.markets.find((m) => m.key === "alternate_totals_corners");
+    if (!market) continue;
+    fetched++;
+
+    for (const outcome of market.outcomes) {
+      if (outcome.point === undefined) continue;
+      const name = outcome.name.toLowerCase();
+      if (name !== "over" && name !== "under") continue;
+      const where = {
+        matchId_source_market_line_outcome: {
+          matchId: match.id,
+          source: SHARP_SOURCE,
+          market: "totals_corners",
+          line: outcome.point,
+          outcome: name,
+        },
+      };
+      await prisma.marketOdds.upsert({
+        where,
+        create: { matchId: match.id, source: SHARP_SOURCE, market: "totals_corners", line: outcome.point, outcome: name, odds: outcome.price },
+        update: { odds: outcome.price, fetchedAt: new Date() },
+      });
+    }
+  }
+
+  return { matches: fetched, skipped };
+}
+
 function mapOutcome(
   marketKey: string,
   outcome: ApiOutcome,

@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LOCAL_ODDS_MAX_AGE_HOURS, SHARP_SOURCE } from "../../config.js";
 import { currentBankroll } from "../../services/bankroll.js";
+import { formatMarket } from "../../utils/format.js";
 import { prisma } from "../../services/db.js";
 import { evaluateMatch, type UncomparableOdds, type ValuePick } from "../../services/valueDetector.js";
 
@@ -37,7 +38,7 @@ if (evaluations.length === 0) {
   console.table(
     evaluations.map((p) => ({
       Partido: p.matchLabel,
-      Mercado: p.market === "totals" ? `${p.outcome} ${p.line}` : `1X2 ${p.outcome}`,
+      Mercado: formatMarket(p.market, p.outcome, p.line),
       Casa: p.source,
       "Cuota local": p.localOdds.toFixed(2),
       Pinnacle: p.pinnacleOdds.toFixed(2),
@@ -67,7 +68,7 @@ if (staleCount > 0) {
 if (uncomparable.length > 0) {
   console.log("\n⚠️  Cuotas locales SIN referencia Pinnacle comparable (no evaluadas):");
   for (const u of uncomparable) {
-    const mercado = u.market === "totals" ? `${u.outcome} ${u.line}` : `1X2 ${u.outcome}`;
+    const mercado = formatMarket(u.market, u.outcome, u.line);
     console.log(`   ${u.matchLabel} — ${mercado} @ ${u.odds} (${u.source})`);
   }
   console.log("   Pinnacle no cubre ese mercado/línea. Usa la línea que ofrece Pinnacle (ver `pnpm odds:inject`).");

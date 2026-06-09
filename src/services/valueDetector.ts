@@ -51,6 +51,7 @@ export interface MatchEvaluation {
 const MARKET_OUTCOMES: Record<string, string[]> = {
   h2h: ["home", "draw", "away"],
   totals: ["over", "under"],
+  totals_corners: ["over", "under"],
 };
 
 /**

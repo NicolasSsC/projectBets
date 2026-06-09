@@ -3,6 +3,7 @@ import { RISK } from "../../config.js";
 import { currentBankroll } from "../../services/bankroll.js";
 import { todayPnl } from "../../services/betting.js";
 import { prisma } from "../../services/db.js";
+import { formatMarket } from "../../utils/format.js";
 
 const fmt = (n: number) => `$${n.toLocaleString("es-CO")}`;
 
@@ -36,7 +37,7 @@ if (pendingBets.length > 0) {
   console.table(
     pendingBets.map((b) => ({
       Partido: `${b.match.homeTeam} vs ${b.match.awayTeam}`,
-      Mercado: b.market === "totals" ? `${b.outcome} ${b.line}` : `1X2 ${b.outcome}`,
+      Mercado: formatMarket(b.market, b.outcome, b.line),
       Casa: b.source,
       Cuota: b.odds,
       Stake: fmt(b.stake),

@@ -1,6 +1,7 @@
 /** Liquidación de apuestas pendientes al final del día (logResult del plan). */
 import { confirm, select } from "@inquirer/prompts";
 import { settleBet, type SettleOutcome } from "../../services/betting.js";
+import { formatMarket } from "../../utils/format.js";
 import { prisma } from "../../services/db.js";
 
 let again = true;
@@ -19,7 +20,7 @@ while (again) {
   const betId = await select({
     message: "Apuesta a liquidar:",
     choices: pending.map((b) => ({
-      name: `${b.match.homeTeam} vs ${b.match.awayTeam} — ${b.market === "totals" ? `${b.outcome} ${b.line}` : `1X2 ${b.outcome}`} @ ${b.odds} (${b.source}) | $${b.stake.toLocaleString("es-CO")}`,
+      name: `${b.match.homeTeam} vs ${b.match.awayTeam} — ${formatMarket(b.market, b.outcome, b.line)} @ ${b.odds} (${b.source}) | $${b.stake.toLocaleString("es-CO")}`,
       value: b.id,
     })),
   });
