@@ -1,6 +1,6 @@
 /** Contexto estadístico de un partido próximo: eliminatorias de ambas selecciones. */
 import { select } from "@inquirer/prompts";
-import { matchTeamName } from "../../services/apiFootball.js";
+import { matchTeamName } from "../../services/espn.js";
 import { prisma } from "../../services/db.js";
 
 const matches = await prisma.match.findMany({

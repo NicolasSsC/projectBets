@@ -1,17 +1,24 @@
 /**
- * Enriquece QualifyingStats con tiros a puerta, córners y xG promedio de los
- * últimos 5 partidos. Costo: ~6 requests por equipo (1 lista + 5 stats), así
- * que solo procesa equipos con partido próximo en la DB (48h) o los pasados
- * por argumento: `pnpm stats:enrich "Mexico" "South Africa"`.
+ * Enriquece QualifyingStats con tiros a puerta y córners promedio de los
+ * últimos 5 partidos del equipo, vía boxscores de ESPN. Procesa equipos con
+ * partido próximo (48h) o los pasados por argumento:
+ *   pnpm stats:enrich "Mexico" "South Africa"
+ *
+ * Limitación conocida: ESPN no publica boxscore en todas las eliminatorias
+ * (CONMEBOL suele venir vacío; UEFA sí trae). Durante el Mundial los partidos
+ * del torneo sí traen stats y este script los irá incorporando.
  */
 import "dotenv/config";
 import {
-  apiFootballGet,
-  budgetUsedToday,
+  FRIENDLY_LEAGUE,
   matchTeamName,
-  type ApiFixture,
-  type ApiFixtureStats,
-} from "../../services/apiFootball.js";
+  QUALIFYING_LEAGUES,
+  scoreboard,
+  summary,
+  teamStat,
+  WORLD_CUP_LEAGUE,
+  type EspnEvent,
+} from "../../services/espn.js";
 import { prisma } from "../../services/db.js";
 
 const args = process.argv.slice(2);
@@ -39,28 +46,51 @@ if (dbTeams.length === 0) {
 }
 const dbNames = dbTeams.map((t) => t.name);
 
+// Cache de scoreboards por liga para no repetir requests entre equipos
+const eventCache = new Map<string, EspnEvent[]>();
+async function leagueEvents(league: string): Promise<EspnEvent[]> {
+  if (!eventCache.has(league)) {
+    // ESPN rechaza rangos de fechas mayores a ~12 meses
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const chunks = ["20240701-20250630", `20250701-${today}`];
+    const all: EspnEvent[] = [];
+    for (const dates of chunks) all.push(...(await scoreboard(league, dates)));
+    eventCache.set(league, all);
+  }
+  return eventCache.get(league)!;
+}
+
 for (const oddsName of targetNames) {
   const matched = matchTeamName(oddsName, dbNames);
   if (!matched) {
-    console.log(`⚠️  "${oddsName}" no se pudo mapear a un equipo de API-Football — saltado.`);
+    console.log(`⚠️  "${oddsName}" no se pudo mapear a un equipo de ESPN — saltado.`);
     continue;
   }
   const team = dbTeams.find((t) => t.name === matched)!;
+  const espnId = String(team.apiId);
+  const confLeague = QUALIFYING_LEAGUES[team.stats?.confederation ?? ""];
 
-  const last5 = await apiFootballGet<ApiFixture>("/fixtures", { team: team.apiId, last: 5, status: "FT" });
-  let sot = 0, corners = 0, xg = 0, nSot = 0, nCorners = 0, nXg = 0;
-
-  for (const f of last5) {
-    const statsResp = await apiFootballGet<ApiFixtureStats>("/fixtures/statistics", { fixture: f.fixture.id });
-    const own = statsResp.find((s) => s.team.id === team.apiId);
-    if (!own) continue;
-    for (const stat of own.statistics) {
-      const v = stat.value === null ? null : Number(stat.value);
-      if (v === null || Number.isNaN(v)) continue;
-      if (stat.type === "Shots on Goal") { sot += v; nSot++; }
-      if (stat.type === "Corner Kicks") { corners += v; nCorners++; }
-      if (stat.type === "expected_goals") { xg += v; nXg++; }
+  // Últimos 5 partidos finalizados del equipo: Mundial + eliminatoria + amistosos
+  const leagues = confLeague
+    ? [WORLD_CUP_LEAGUE, confLeague, FRIENDLY_LEAGUE]
+    : [WORLD_CUP_LEAGUE, FRIENDLY_LEAGUE];
+  const own: { league: string; event: EspnEvent }[] = [];
+  for (const league of leagues) {
+    for (const e of await leagueEvents(league)) {
+      if (!e.status.type.completed) continue;
+      if (e.competitions[0].competitors.some((c) => c.team.id === espnId)) own.push({ league, event: e });
     }
+  }
+  own.sort((a, b) => b.event.date.localeCompare(a.event.date));
+  const last5 = own.slice(0, 5);
+
+  let sot = 0, corners = 0, nSot = 0, nCorners = 0;
+  for (const { league, event } of last5) {
+    const s = await summary(league, event.id);
+    const sotV = teamStat(s, espnId, "shotsOnTarget");
+    const cornersV = teamStat(s, espnId, "wonCorners");
+    if (sotV !== null) { sot += sotV; nSot++; }
+    if (cornersV !== null) { corners += cornersV; nCorners++; }
   }
 
   await prisma.qualifyingStats.update({
@@ -68,14 +98,12 @@ for (const oddsName of targetNames) {
     data: {
       shotsOnTargetAvg: nSot > 0 ? sot / nSot : null,
       cornersAvg: nCorners > 0 ? corners / nCorners : null,
-      xgForAvg: nXg > 0 ? xg / nXg : null,
-      enrichedMatches: last5.length,
+      enrichedMatches: Math.max(nSot, nCorners),
     },
   });
   console.log(
-    `✅ ${team.name}: SoT ${nSot ? (sot / nSot).toFixed(1) : "—"} | córners ${nCorners ? (corners / nCorners).toFixed(1) : "—"} | xG ${nXg ? (xg / nXg).toFixed(2) : "—"} (últimos ${last5.length})`,
+    `${nSot || nCorners ? "✅" : "⚠️ "} ${team.name}: SoT ${nSot ? (sot / nSot).toFixed(1) : "—"} | córners ${nCorners ? (corners / nCorners).toFixed(1) : "—"} (boxscores con datos: ${Math.max(nSot, nCorners)}/${last5.length})`,
   );
 }
 
-console.log(`\nRequests API-Football usados hoy: ${await budgetUsedToday()}/90`);
 await prisma.$disconnect();

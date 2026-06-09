@@ -1,21 +1,19 @@
 /**
- * Seed de eliminatorias: agrega por equipo PJ, récord, goles y forma (últimos 5)
- * a partir de la lista de partidos de cada confederación. ~1 request por
- * liga-temporada (24 máx). Idempotente: re-ejecutar actualiza.
+ * Seed de eliminatorias 2026 vía ESPN: PJ, récord, goles y forma (últimos 5)
+ * de las 6 confederaciones. Sin key ni límite de temporadas. Idempotente.
  *
  * NOTA: esto es CONTEXTO para decidir sobre picks. El detector de value
  * sigue usando exclusivamente Pinnacle de-vigged.
  */
 import "dotenv/config";
-import { apiFootballGet, budgetUsedToday, QUALIFYING_LEAGUES, type ApiFixture } from "../../services/apiFootball.js";
+import { FRIENDLY_LEAGUE, QUALIFYING_LEAGUES, scoreboard } from "../../services/espn.js";
 import { prisma } from "../../services/db.js";
 
-// Las eliminatorias del Mundial 2026 se jugaron entre 2023 y 2025; API-Football
-// etiqueta la temporada según la confederación, así que probamos varias.
-const SEASONS = [2023, 2024, 2025, 2026];
+// La eliminatoria 2026 se jugó entre sept 2023 y marzo 2026 (repechajes)
+const DATE_CHUNKS = ["20230901-20240630", "20240701-20250630", "20250701-20260331"];
 
 interface TeamAgg {
-  apiId: number;
+  espnId: number;
   name: string;
   confederation: string;
   results: { date: string; gf: number; ga: number }[];
@@ -23,34 +21,68 @@ interface TeamAgg {
 
 const teams = new Map<number, TeamAgg>();
 
-for (const [confederation, leagueId] of Object.entries(QUALIFYING_LEAGUES)) {
-  let confFixtures = 0;
-  for (const season of SEASONS) {
-    let fixtures: ApiFixture[];
+for (const [confederation, league] of Object.entries(QUALIFYING_LEAGUES)) {
+  let confMatches = 0;
+  for (const dates of DATE_CHUNKS) {
+    let events;
     try {
-      fixtures = await apiFootballGet<ApiFixture>("/fixtures", { league: leagueId, season });
+      events = await scoreboard(league, dates);
     } catch (err) {
-      console.error(`  ⚠️ ${confederation} ${season}: ${(err as Error).message}`);
+      console.error(`  ⚠️ ${confederation} ${dates}: ${(err as Error).message}`);
       continue;
     }
 
-    for (const f of fixtures) {
-      if (f.fixture.status.short !== "FT" || f.goals.home === null || f.goals.away === null) continue;
-      confFixtures++;
-      for (const side of ["home", "away"] as const) {
-        const t = f.teams[side];
-        const agg = teams.get(t.id) ?? { apiId: t.id, name: t.name, confederation, results: [] };
-        agg.results.push({
-          date: f.fixture.date,
-          gf: side === "home" ? f.goals.home : f.goals.away,
-          ga: side === "home" ? f.goals.away : f.goals.home,
-        });
-        teams.set(t.id, agg);
+    for (const e of events) {
+      if (!e.status.type.completed) continue;
+      const comp = e.competitions[0];
+      const home = comp.competitors.find((c) => c.homeAway === "home");
+      const away = comp.competitors.find((c) => c.homeAway === "away");
+      if (!home || !away || home.score === undefined || away.score === undefined) continue;
+      confMatches++;
+
+      for (const [own, rival] of [[home, away], [away, home]] as const) {
+        const id = Number(own.team.id);
+        const agg = teams.get(id) ?? { espnId: id, name: own.team.displayName, confederation, results: [] };
+        agg.results.push({ date: e.date, gf: Number(own.score), ga: Number(rival.score) });
+        teams.set(id, agg);
       }
     }
   }
-  console.log(`${confederation}: ${confFixtures} partidos finalizados agregados`);
+  console.log(`${confederation}: ${confMatches} partidos finalizados`);
 }
+
+// Los anfitriones (México, USA, Canadá) no jugaron eliminatoria: su forma
+// sale de amistosos recientes. Se marcan con confederación "hosts".
+const HOSTS = ["Mexico", "United States", "Canada"];
+for (const dates of ["20240901-20250630", "20250701-20260610"]) {
+  let events;
+  try {
+    events = await scoreboard(FRIENDLY_LEAGUE, dates);
+  } catch (err) {
+    console.error(`  ⚠️ amistosos ${dates}: ${(err as Error).message}`);
+    continue;
+  }
+  for (const e of events) {
+    if (!e.status.type.completed) continue;
+    const comp = e.competitions[0];
+    const home = comp.competitors.find((c) => c.homeAway === "home");
+    const away = comp.competitors.find((c) => c.homeAway === "away");
+    if (!home || !away || home.score === undefined || away.score === undefined) continue;
+    for (const [own, rival] of [[home, away], [away, home]] as const) {
+      if (!HOSTS.includes(own.team.displayName)) continue;
+      const id = Number(own.team.id);
+      const agg = teams.get(id) ?? { espnId: id, name: own.team.displayName, confederation: "hosts", results: [] };
+      agg.results.push({ date: e.date, gf: Number(own.score), ga: Number(rival.score) });
+      teams.set(id, agg);
+    }
+  }
+}
+console.log(`anfitriones: ${HOSTS.length} equipos desde amistosos`);
+
+// Datos derivados: se reconstruyen completos en cada seed (evita conflictos
+// de IDs si la fuente cambió, p. ej. del intento anterior con API-Football)
+await prisma.qualifyingStats.deleteMany({});
+await prisma.team.deleteMany({});
 
 let saved = 0;
 for (const agg of teams.values()) {
@@ -62,39 +94,30 @@ for (const agg of teams.values()) {
     .map((r) => (r.gf > r.ga ? "W" : r.gf === r.ga ? "D" : "L"))
     .join("");
 
+  const data = {
+    confederation: agg.confederation,
+    played: agg.results.length,
+    wins,
+    draws,
+    losses: agg.results.length - wins - draws,
+    goalsFor: agg.results.reduce((s, r) => s + r.gf, 0),
+    goalsAgainst: agg.results.reduce((s, r) => s + r.ga, 0),
+    formLast5,
+  };
+
   const team = await prisma.team.upsert({
-    where: { apiId: agg.apiId },
-    create: { apiId: agg.apiId, name: agg.name },
+    where: { apiId: agg.espnId },
+    create: { apiId: agg.espnId, name: agg.name },
     update: { name: agg.name },
   });
   await prisma.qualifyingStats.upsert({
     where: { teamId: team.id },
-    create: {
-      teamId: team.id,
-      confederation: agg.confederation,
-      played: agg.results.length,
-      wins,
-      draws,
-      losses: agg.results.length - wins - draws,
-      goalsFor: agg.results.reduce((s, r) => s + r.gf, 0),
-      goalsAgainst: agg.results.reduce((s, r) => s + r.ga, 0),
-      formLast5,
-    },
-    update: {
-      confederation: agg.confederation,
-      played: agg.results.length,
-      wins,
-      draws,
-      losses: agg.results.length - wins - draws,
-      goalsFor: agg.results.reduce((s, r) => s + r.gf, 0),
-      goalsAgainst: agg.results.reduce((s, r) => s + r.ga, 0),
-      formLast5,
-    },
+    create: { teamId: team.id, ...data },
+    update: data,
   });
   saved++;
 }
 
-console.log(`\n✅ ${saved} selecciones con stats de eliminatorias.`);
-console.log(`Requests API-Football usados hoy: ${await budgetUsedToday()}/90`);
-console.log("Para tiros a puerta/córners/xG: `pnpm stats:enrich` (consume ~6 req por equipo).");
+console.log(`\n✅ ${saved} selecciones con stats de eliminatorias (fuente: ESPN).`);
+console.log("Para tiros a puerta/córners: `pnpm stats:enrich` (disponible según torneo).");
 await prisma.$disconnect();

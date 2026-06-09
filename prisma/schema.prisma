@@ -53,7 +53,7 @@ model Bet {
 
 model Team {
   id     String @id @default(cuid())
-  apiId  Int    @unique // team id de API-Football
+  apiId  Int    @unique // team id de ESPN
   name   String @unique
   stats  QualifyingStats?
 }
@@ -77,12 +77,6 @@ model QualifyingStats {
   cornersAvg       Float?
   enrichedMatches  Int      @default(0) // sobre cuántos partidos se calcularon los promedios
   updatedAt        DateTime @updatedAt
-}
-
-// Contador de requests diarios a API-Football (plan gratuito: 100/día)
-model ApiUsage {
-  date  String @id // YYYY-MM-DD
-  count Int    @default(0)
 }
 
 model BankrollSnapshot {
