@@ -32,6 +32,21 @@ export interface ValuePick {
   stake: number; // COP
 }
 
+/** Cuota local guardada que no se pudo comparar (Pinnacle no cubre ese mercado/línea). */
+export interface UncomparableOdds {
+  matchLabel: string;
+  source: string;
+  market: string;
+  line: number;
+  outcome: string;
+  odds: number;
+}
+
+export interface MatchEvaluation {
+  evaluations: ValuePick[]; // todas las comparaciones, incluso con edge negativo
+  uncomparable: UncomparableOdds[];
+}
+
 /** Orden canónico de outcomes por mercado, para de-vig consistente. */
 const MARKET_OUTCOMES: Record<string, string[]> = {
   h2h: ["home", "draw", "away"],
@@ -44,15 +59,17 @@ const MARKET_OUTCOMES: Record<string, string[]> = {
  * pFair * cuotaLocal - 1 >= minEdge (el filtro vive en kellyStake → stake > 0).
  */
 export function detectValue(match: MatchInfo, rows: OddsRow[], bankroll: number): ValuePick[] {
-  return evaluateLocalOdds(match, rows, bankroll).filter((p) => p.stake > 0);
+  return evaluateMatch(match, rows, bankroll).evaluations.filter((p) => p.stake > 0);
 }
 
 /**
- * Igual que detectValue pero devuelve TODAS las comparaciones locales vs
- * Pinnacle, incluyendo edges negativos (stake 0). Para diagnóstico/reporte.
+ * Evalúa todas las cuotas locales de un partido contra Pinnacle. Devuelve
+ * también las que NO tienen referencia comparable, para que nada se pierda
+ * en silencio (ej: Betplay totals 2.5 cuando Pinnacle solo tiene 2.25).
  */
-export function evaluateLocalOdds(match: MatchInfo, rows: OddsRow[], bankroll: number): ValuePick[] {
+export function evaluateMatch(match: MatchInfo, rows: OddsRow[], bankroll: number): MatchEvaluation {
   const picks: ValuePick[] = [];
+  const uncomparable: UncomparableOdds[] = [];
   const matchLabel = `${match.homeTeam} vs ${match.awayTeam}`;
 
   // Agrupar por mercado+línea
@@ -74,7 +91,15 @@ export function evaluateLocalOdds(match: MatchInfo, rows: OddsRow[], bankroll: n
     const sharpRows = outcomes.map((o) =>
       groupRows.find((r) => r.source === SHARP_SOURCE && r.outcome === o),
     );
-    if (sharpRows.some((r) => r === undefined)) continue; // Pinnacle incompleto → no hay referencia
+    if (sharpRows.some((r) => r === undefined)) {
+      // Pinnacle incompleto → las cuotas locales de este grupo quedan sin referencia
+      for (const row of groupRows) {
+        if ((LOCAL_SOURCES as readonly string[]).includes(row.source)) {
+          uncomparable.push({ matchLabel, source: row.source, market, line, outcome: row.outcome, odds: row.odds });
+        }
+      }
+      continue;
+    }
 
     const sharp = sharpRows as OddsRow[];
     const fairProbs = devig(sharp.map((r) => r.odds));
@@ -105,5 +130,6 @@ export function evaluateLocalOdds(match: MatchInfo, rows: OddsRow[], bankroll: n
     }
   }
 
-  return picks.sort((a, b) => b.edge - a.edge);
+  picks.sort((a, b) => b.edge - a.edge);
+  return { evaluations: picks, uncomparable };
 }

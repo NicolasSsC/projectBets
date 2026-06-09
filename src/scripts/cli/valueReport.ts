@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { currentBankroll } from "../../services/bankroll.js";
 import { prisma } from "../../services/db.js";
-import { evaluateLocalOdds, type ValuePick } from "../../services/valueDetector.js";
+import { evaluateMatch, type UncomparableOdds, type ValuePick } from "../../services/valueDetector.js";
 
 const bankroll = await currentBankroll();
 const matches = await prisma.match.findMany({
@@ -12,8 +12,11 @@ const matches = await prisma.match.findMany({
 });
 
 const evaluations: ValuePick[] = [];
+const uncomparable: UncomparableOdds[] = [];
 for (const match of matches) {
-  evaluations.push(...evaluateLocalOdds(match, match.odds, bankroll));
+  const result = evaluateMatch(match, match.odds, bankroll);
+  evaluations.push(...result.evaluations);
+  uncomparable.push(...result.uncomparable);
 }
 evaluations.sort((a, b) => b.edge - a.edge);
 const picks = evaluations.filter((p) => p.stake > 0);
@@ -49,6 +52,15 @@ if (evaluations.length === 0) {
     writeFileSync(file, JSON.stringify({ generatedAt: new Date(), bankroll, picks }, null, 2));
     console.log(`Reporte guardado en ${file}`);
   }
+}
+
+if (uncomparable.length > 0) {
+  console.log("\n⚠️  Cuotas locales SIN referencia Pinnacle comparable (no evaluadas):");
+  for (const u of uncomparable) {
+    const mercado = u.market === "totals" ? `${u.outcome} ${u.line}` : `1X2 ${u.outcome}`;
+    console.log(`   ${u.matchLabel} — ${mercado} @ ${u.odds} (${u.source})`);
+  }
+  console.log("   Pinnacle no cubre ese mercado/línea. Usa la línea que ofrece Pinnacle (ver `pnpm odds:inject`).");
 }
 
 // Aviso de frescura: comparar contra Pinnacle viejo puede ser solo movimiento de línea

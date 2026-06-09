@@ -54,8 +54,34 @@ while (again) {
 
   let line = 0;
   if (marketKey === "totals") {
-    const raw = await input({ message: "Línea de goles:", default: "2.5" });
-    line = Number(raw.replace(",", "."));
+    // Solo las líneas que Pinnacle cubre son comparables — ofrecerlas primero
+    const pinnacleLines = await prisma.marketOdds.findMany({
+      where: { matchId, source: "pinnacle", market: "totals" },
+      select: { line: true },
+      distinct: ["line"],
+      orderBy: { line: "asc" },
+    });
+
+    if (pinnacleLines.length === 0) {
+      console.log("⚠️  Pinnacle no tiene totals para este partido — la cuota se guardará pero NO será comparable.");
+      const raw = await input({ message: "Línea de goles:", default: "2.5" });
+      line = Number(raw.replace(",", "."));
+    } else {
+      const choice = await select({
+        message: "Línea de goles (las de Pinnacle son las únicas comparables):",
+        choices: [
+          ...pinnacleLines.map((l) => ({ name: `${l.line} (Pinnacle ✅)`, value: l.line })),
+          { name: "Otra línea (no comparable)", value: -1 },
+        ],
+      });
+      if (choice === -1) {
+        const raw = await input({ message: "Línea de goles:" });
+        line = Number(raw.replace(",", "."));
+        console.log("⚠️  Pinnacle no cubre esa línea — se guardará pero NO entrará al detector de value.");
+      } else {
+        line = choice;
+      }
+    }
   }
 
   for (const source of LOCAL_SOURCES) {
