@@ -38,6 +38,7 @@ lineups → (alineaciones fuera) → odds:fetch --force → odds:inject
 | `pnpm demo:clean` | Borra todo rastro del sandbox: partido, apuestas y snapshots de bankroll generados probando. |
 | `pnpm demo` | Demo automático del detector (siembra, verifica y limpia solo — no interactivo). |
 | `pnpm demo:settle` | Demo automático de la aritmética de liquidación y bankroll. |
+| `pnpm clean` | Limpieza selectiva por índice: borra cuotas locales mal digitadas o apuestas pendientes registradas por error (checkbox multi-selección con confirmación). |
 | `pnpm odds:sports` | Lista los sport keys de The Odds API (0 créditos) — solo para verificar `ODDS_SPORT_KEY`. |
 | `pnpm db:studio` | Abre Prisma Studio: interfaz web para ver/editar la base de datos. |
 | `pnpm db:migrate` | Aplica cambios del schema de Prisma (solo al desarrollar). |
