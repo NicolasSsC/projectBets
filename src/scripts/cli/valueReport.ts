@@ -5,6 +5,7 @@ import { currentBankroll } from "../../services/bankroll.js";
 import { formatMarket } from "../../utils/format.js";
 import { prisma } from "../../services/db.js";
 import { evaluateMatch, type UncomparableOdds, type ValuePick } from "../../services/valueDetector.js";
+import { matchTeamName } from "../../services/espn.js";
 
 const bankroll = await currentBankroll();
 const matches = await prisma.match.findMany({
@@ -12,6 +13,45 @@ const matches = await prisma.match.findMany({
   include: { odds: true },
   orderBy: { kickoff: "asc" },
 });
+
+// ——— Contexto VISUAL: stats de equipos junto a cada comparación. ———
+// Solo informa la decisión humana; el edge y el stake NO lo usan.
+const allTeams = await prisma.team.findMany({ include: { stats: true } });
+const teamNames = allTeams.map((t) => t.name);
+const statsByOddsName = new Map<string, NonNullable<(typeof allTeams)[number]["stats"]>>();
+function teamStats(oddsName: string) {
+  if (!statsByOddsName.has(oddsName)) {
+    const matched = matchTeamName(oddsName, teamNames);
+    const stats = matched ? allTeams.find((t) => t.name === matched)?.stats : null;
+    if (stats) statsByOddsName.set(oddsName, stats);
+  }
+  return statsByOddsName.get(oddsName) ?? null;
+}
+
+/**
+ * Columna de contexto por pick. ⚠️ = las stats contradicen la dirección del
+ * pick (ej: over córners 9.5 cuando los equipos suman 7.9 de promedio) —
+ * sugiere stake mínimo o dejarlo pasar, sobre todo en mercados poco líquidos.
+ */
+function contextFor(p: ValuePick): string {
+  const [homeName, awayName] = p.matchLabel.split(" vs ");
+  const home = teamStats(homeName);
+  const away = teamStats(awayName);
+  if (p.market === "totals_corners") {
+    if (home?.cornersAvg == null || away?.cornersAvg == null) return "—";
+    const sum = home.cornersAvg + away.cornersAvg;
+    const contradicts = (p.outcome === "over" && sum < p.line - 0.5) || (p.outcome === "under" && sum > p.line + 0.5);
+    return `Σcórners ${sum.toFixed(1)}${contradicts ? " ⚠️" : ""}`;
+  }
+  if (p.market === "totals") {
+    if (home?.xgForAvg == null || away?.xgForAvg == null) return "—";
+    const sum = home.xgForAvg + away.xgForAvg;
+    const contradicts = (p.outcome === "over" && sum < p.line - 0.25) || (p.outcome === "under" && sum > p.line + 0.25);
+    return `ΣxG ${sum.toFixed(2)}${contradicts ? " ⚠️" : ""}`;
+  }
+  if (home?.formLast5 && away?.formLast5) return `${home.formLast5} / ${away.formLast5}`;
+  return "—";
+}
 
 const staleCutoff = new Date(Date.now() - LOCAL_ODDS_MAX_AGE_HOURS * 3600_000);
 let staleCount = 0;
@@ -46,8 +86,12 @@ if (evaluations.length === 0) {
       Edge: `${(p.edge * 100).toFixed(1)}%`,
       "Stake COP": p.stake > 0 ? p.stake.toLocaleString("es-CO") : "—",
       Value: p.stake > 0 ? "✅" : "",
+      Contexto: contextFor(p),
     })),
   );
+  if (evaluations.some((p) => contextFor(p).includes("⚠️"))) {
+    console.log("⚠️  = las stats de los equipos contradicen la dirección del pick (solo informativo — el edge no lo usa).");
+  }
 
   if (picks.length === 0) {
     console.log("Sin value hoy: ninguna cuota local supera la probabilidad justa de Pinnacle en ≥5%.");
